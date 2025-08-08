@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Input Security Group ID
+SG_ID="$1"
+
+if [[ -z "$SG_ID" ]]; then
+  echo "Usage: $0 <security-group-id>"
+  exit 1
+fi
+
+echo "🔍 Checking usage for Security Group: $SG_ID"
+echo "------------------------------------------"
+
+# Check EC2 Instances
+echo "➡️  EC2 Instances:"
+aws ec2 describe-instances \
+  --query "Reservations[].Instances[?SecurityGroups[?GroupId=='$SG_ID']].InstanceId" \
+  --output text
+
+# Check Network Interfaces
+echo -e "\n➡️  Network Interfaces:"
+aws ec2 describe-network-interfaces \
+  --filters Name=group-id,Values=$SG_ID \
+  --query "NetworkInterfaces[*].{ENI:NetworkInterfaceId,AttachedTo:Attachment.InstanceId}" \
+  --output table
+
+# Check Classic Load Balancers (ELB)
+echo -e "\n➡️  Classic Load Balancers (ELB):"
+aws elb describe-load-balancers \
+  --query "LoadBalancerDescriptions[?contains(SecurityGroups, '$SG_ID')].LoadBalancerName" \
+  --output text
+
+# Check ALB/NLB (ELBv2)
+echo -e "\n➡️  ALB / NLB (ELBv2):"
+aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?contains(SecurityGroups, '$SG_ID')].LoadBalancerArn" \
+  --output text
+
+# Check RDS Instances
+echo -e "\n➡️  RDS Instances:"
+aws rds describe-db-instances \
+  --query "DBInstances[?VpcSecurityGroups[?VpcSecurityGroupId=='$SG_ID']].DBInstanceIdentifier" \
+  --output text
+
+# Check Lambda Functions in VPC
+echo -e "\n➡️  Lambda Functions in VPC:"
+for func in $(aws lambda list-functions --query 'Functions[*].FunctionName' --output text); do
+  aws lambda get-function-configuration --function-name "$func" \
+    --query "VpcConfig.SecurityGroupIds" --output text | grep -q "$SG_ID" && echo "$func"
+done
+
+echo -e "\n✅ Done!"
+
